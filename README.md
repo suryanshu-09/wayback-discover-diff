@@ -1,93 +1,167 @@
-# wayback-discover-diff
+# We Go Wayback
 
-A Python 3.10+ application running a web service that accepts HTTP GET requests and returns JSON:
+A Golang rewrite of [wayback-discover-diff](https://github.com/internetarchive/wayback-discover-diff.git).
 
-- `/calculate-simhash?url={URL}&year={YEAR}`
+This app calculates and retrieves [Simhash](https://en.wikipedia.org/wiki/SimHash) values for archived web captures via the Wayback Machine.
 
-  Checks if there is a task to calculate simhash for all captures of target URL in the specified year already running.
-  If there isn't, it creates it.
-  
-  Return JSON `{“status”: “started”, “job_id”: “XXYYZZ (uuid)”}`
- 
-  **OR**
-  
-  If there is a task already running it returns its job_id.
-  
-  Return JSON `{“status”: “PENDING”, “job_id”: “XXYYZZ (uuid)”}`
- 
-- `/simhash?url={URL}&timestamp={timestamp}`
-  
-  Returns JSON `{“simhash”: “XXXX”}` if that capture's simhash value has already been calculated
-  
-  **OR**
-  
-  Returns JSON `{"message": "NO_CAPTURES", "status": "error"}` if the WBM has no captures for this year and URL combination.
-  
-  **OR**
-  
-  Returns JSON `{ "message": "CAPTURE_NOT_FOUND", "status": "error" }` if the timestamp does not exist.
-  
-- `/simhash?url={URL}&year={YEAR}`
-  
-  Which returns all the timestamps for which a simhash value exists in the DB for that specific URL and year with the following       format : ["TIMESTAMP_VALUE", "SIMHASH_VALUE"]
+**Tech Stack**:
 
-  Its also possible to view the same results in a more compact data format using
+- [Chi](https://github.com/go-chi/chi) – HTTP routing
+- [Asynq](https://github.com/hibiken/asynq) – Background jobs
+- [Redis](https://redis.io) – Storage and job backend
 
-- `/simhash?url={URL}&year={YEAR}&compress=1`
+---
 
-  Returns JSON { captures	[…], total number of captures: XXX, status	"COMPLETE" } if there are simhash values in the DB and that job is completed.
+## 🚀 Getting Started
 
-  **OR**
-
-  Returns JSON `{ captures	[…], total number of captures: XXX, status	"PENDING" }` if there are simhash values in the DB but that job is still pending.
-
-  **OR**
-
-  Returns JSON `{'status': 'error', 'message': 'NOT_CAPTURED'}` if that URL and year combination hasn't been hashed yet.
-
-  **OR**
-
-  Returns JSON `{'status': 'error', 'message': 'NO_CAPTURES'}` if the WBM doesn't have snapshots for that year and URL.
-
-  - `/simhash?url={URL}&year={YEAR}&page={PAGE_NUMBER}`
-  
-  Which is the same as the request above but, depending on the page size that is set in the conf.yml file, the results are paginated. The response has the following format : [["pages","NUMBER_OF_PAGES"],["TIMESTAMP_VALUE", "SIMHASH_VALUE"]]
-  
-  **The SIMHASH_VALUE is base64 encoded**
-  
-- `/job?job_id=<job_Id>`
-  
-  Returns JSON `{“status”: “pending”, “job_Id”: “XXYYZZ”, “info”: “X out of Y captures have been processed”}` the status of the job matching that specific job id
-  
-## Installing
-
-Using conda or another Python environment management system, select Python 3.10 to create a virtualenv and activate it:
-```Shell
-python -m venv venv
-. venv/bin/activate
+```bash
+git clone https://github.com/yourname/we-go-wayback.git
+cd we-go-wayback
+docker compose up -d
+go run main.go
 ```
 
-Install and update using pip:
-```Shell
-python setup.py install
-```
-Copy the conf.yml.example file to the same directory, removing the .example extension
+Run tests with
 
 ```
-cd wayback_discover_diff
-cp conf.yml.example conf.yml
-```
-## Run
-In order to run this server you should run :
-```
-bash run_gunicorn.sh &
-bash run_celery.sh
+go test -v ./tests
 ```
 
-Open http://127.0.0.1:4000 in a browser.
+**Requirements**:
 
-## Tests
-In order to run the tests call the script:
+- Go 1.20+
+- Redis:6.0 running locally or via config
+
+---
+
+## 🧭 HTTP API
+
+### `GET /`
+
+Returns the current version.
+
+---
+
+### `GET /calculate-simhash?url={URL}&year={YEAR}`
+
+Checks if a simhash calculation task exists for the URL/year.
+
+- If a task is running:
+
+```json
+{ "status": "PENDING", "job_id": "xx-yy-zz" }
 ```
-bash run_tests.sh
+
+- If not, starts a new task:
+
+```json
+{ "status": "started", "job_id": "xx-yy-zz" }
 ```
+
+---
+
+### `GET /simhash?url={URL}&timestamp={TIMESTAMP}`
+
+Returns the simhash for a specific capture.
+
+- If found:
+
+```json
+{ "simhash": "XXXX" }
+```
+
+- If no captures:
+
+```json
+{ "status": "error", "message": "NO_CAPTURES" }
+```
+
+- If timestamp not found:
+
+```json
+{ "status": "error", "message": "CAPTURE_NOT_FOUND" }
+```
+
+---
+
+### `GET /simhash?url={URL}&year={YEAR}`
+
+Returns all calculated simhashes for the URL/year.
+
+- If complete:
+
+```json
+{
+  "captures": [["TIMESTAMP", "SIMHASH"], ...],
+  "total": 123,
+  "status": "COMPLETE"
+}
+```
+
+- If pending:
+
+```json
+{
+  "captures": [["TIMESTAMP", "SIMHASH"], ...],
+  "total": 123,
+  "status": "PENDING"
+}
+```
+
+- If not captured:
+
+```json
+{ "status": "error", "message": "NOT_CAPTURED" }
+```
+
+- If Wayback has no captures:
+
+```json
+{ "status": "error", "message": "NO_CAPTURES" }
+```
+
+---
+
+### `GET /simhash?url={URL}&year={YEAR}&compress=1`
+
+Returns a compact version of the same JSON data.
+
+---
+
+### `GET /simhash?url={URL}&year={YEAR}&page={PAGE}`
+
+Returns paginated results (page size from `conf.yml`).
+
+```json
+[
+  ["pages", NUMBER_OF_PAGES],
+  ["TIMESTAMP", "SIMHASH"],
+  ...
+]
+```
+
+Note: SIMHASH values are base64 encoded.
+
+---
+
+### `GET /job?job_id={JOB_ID}`
+
+Returns the status of a specific job.
+
+```json
+{
+  "status": "pending",
+  "job_id": "xx-yy-zz",
+  "info": "X out of Y captures have been processed"
+}
+```
+
+---
+
+## ⚙️ Configuration
+
+Edit `conf.yml` to set:
+
+- Redis connection
+- Snapshot/page limits
+- Simhash TTL
